@@ -5,6 +5,7 @@ from faster_whisper import BatchedInferencePipeline, WhisperModel
 
 
 NO_CLIP_TIMESTAMPS_ERROR = "No clip timestamps found"
+NO_AUDIO_STREAM_ERROR = "list index out of range"
 
 MEDIA_EXTENSIONS = {
     ".mp4",
@@ -52,6 +53,13 @@ def transcribe_one(
             segments, info = transcriber.transcribe(str(media_file), **kwargs)
         else:
             raise
+    except IndexError as exc:
+        if NO_AUDIO_STREAM_ERROR in str(exc):
+            print(
+                f"Warning: 跳过 {media_file}，未检测到可解码音频流（可能无音轨或媒体已损坏）。"
+            )
+            return False
+        raise
 
     with out_txt.open("w", encoding="utf-8") as ftxt:
         for seg in segments:
@@ -63,6 +71,7 @@ def transcribe_one(
     print(
         f"Detected language: {info.language}, probability={info.language_probability:.3f}"
     )
+    return True
 
 
 def list_media_files(input_dir: Path):
@@ -142,10 +151,13 @@ def main():
         f"batch_size={args.batch_size}, batched={isinstance(transcriber, BatchedInferencePipeline)}"
     )
 
+    success_count = 0
+    skipped_count = 0
+
     for media_file in media_files:
         rel_path = media_file.relative_to(input_dir)
         out_txt = (output_dir / rel_path).with_suffix(".txt")
-        transcribe_one(
+        ok = transcribe_one(
             transcriber,
             media_file,
             out_txt,
@@ -154,6 +166,12 @@ def main():
             args.vad_filter,
             args.batch_size,
         )
+        if ok:
+            success_count += 1
+        else:
+            skipped_count += 1
+
+    print(f"Finished. success={success_count}, skipped={skipped_count}, total={len(media_files)}")
 
 
 if __name__ == "__main__":
