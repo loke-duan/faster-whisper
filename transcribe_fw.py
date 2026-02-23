@@ -3,6 +3,9 @@ from pathlib import Path
 
 from faster_whisper import BatchedInferencePipeline, WhisperModel
 
+
+NO_CLIP_TIMESTAMPS_ERROR = "No clip timestamps found"
+
 MEDIA_EXTENSIONS = {
     ".mp4",
     ".mkv",
@@ -38,7 +41,17 @@ def transcribe_one(
     if isinstance(transcriber, BatchedInferencePipeline):
         kwargs["batch_size"] = batch_size
 
-    segments, info = transcriber.transcribe(str(media_file), **kwargs)
+    try:
+        segments, info = transcriber.transcribe(str(media_file), **kwargs)
+    except RuntimeError as exc:
+        if NO_CLIP_TIMESTAMPS_ERROR in str(exc) and not vad_filter:
+            print(
+                f"Warning: {media_file} 命中 'No clip timestamps found'，自动重试并启用 VAD。"
+            )
+            kwargs["vad_filter"] = True
+            segments, info = transcriber.transcribe(str(media_file), **kwargs)
+        else:
+            raise
 
     with out_txt.open("w", encoding="utf-8") as ftxt:
         for seg in segments:
