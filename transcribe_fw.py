@@ -12,6 +12,7 @@ MEDIA_EXTENSIONS = {
     ".m4a",
     ".flac",
     ".aac",
+    ".flv",
 }
 
 def format_timestamp(seconds: float, srt=False) -> str:
@@ -61,8 +62,8 @@ def list_media_files(input_dir: Path):
 
 
 def main():
-    input_dir = Path("~/in").expanduser()
-    output_dir = Path("~/out").expanduser()
+    input_dir = Path("E:/PycharmProjects/faster-whisper/in").expanduser()
+    output_dir = Path("E:/PycharmProjects/faster-whisper/out").expanduser()
     model_size = sys.argv[1] if len(sys.argv) >= 2 else "medium"
     lang = sys.argv[2] if len(sys.argv) >= 3 else "zh"  # 改成 "auto" 可自动识别
 
