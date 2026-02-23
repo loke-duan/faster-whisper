@@ -17,20 +17,8 @@ def main():
         print(f"File not found: {inp}")
         sys.exit(1)
 
-    inp_resolved = inp.resolve()
-    home = Path.home().resolve()
-    out_root = home / "out"
-
-    # 如果输入文件位于用户主目录下，则保留其相对目录结构到 ~/out
-    # 例如：~/股票入门 第2套/01.股票常识.flv -> ~/out/股票入门 第2套/01.股票常识.txt
-    try:
-        rel_path = inp_resolved.relative_to(home)
-        out_txt = out_root / rel_path.with_suffix(".txt")
-    except ValueError:
-        # 不在主目录下时，回退到 ~/out/<文件名>.txt
-        out_txt = out_root / inp_resolved.with_suffix(".txt").name
-
-    out_txt.parent.mkdir(parents=True, exist_ok=True)
+    out_base = inp.with_suffix("")
+    out_txt = out_base.with_suffix(".txt")
 
     # 3070Ti：device="cuda" + compute_type="float16" 通常最快
     model = WhisperModel(model_size, device="cuda", compute_type="float16")
