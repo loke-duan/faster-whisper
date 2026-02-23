@@ -1,6 +1,7 @@
-import sys
+import argparse
 from pathlib import Path
-from faster_whisper import WhisperModel
+
+from faster_whisper import BatchedInferencePipeline, WhisperModel
 
 MEDIA_EXTENSIONS = {
     ".mp4",
@@ -15,42 +16,40 @@ MEDIA_EXTENSIONS = {
     ".flv",
 }
 
-def format_timestamp(seconds: float, srt=False) -> str:
-    # seconds -> HH:MM:SS,mmm (SRT) or HH:MM:SS.mmm (VTT)
-    ms = int(round(seconds * 1000.0))
-    h = ms // 3600000
-    ms -= h * 3600000
-    m = ms // 60000
-    ms -= m * 60000
-    s = ms // 1000
-    ms -= s * 1000
-    if srt:
-        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
 
-def transcribe_one(model: WhisperModel, media_file: Path, out_txt: Path, lang: str):
+def transcribe_one(
+    transcriber,
+    media_file: Path,
+    out_txt: Path,
+    lang: str,
+    beam_size: int,
+    vad_filter: bool,
+    batch_size: int,
+):
     out_txt.parent.mkdir(parents=True, exist_ok=True)
 
-    # 3070Ti：device="cuda" + compute_type="float16" 通常最快
-    segments, info = model.transcribe(
-        str(media_file),
+    kwargs = dict(
         language=None if lang == "auto" else lang,
-        vad_filter=True,          # 语音活动检测：减少静音段误识别
-        beam_size=5,
+        vad_filter=vad_filter,
+        beam_size=beam_size,
+        condition_on_previous_text=False,
     )
 
-    # 写 TXT
+    if isinstance(transcriber, BatchedInferencePipeline):
+        kwargs["batch_size"] = batch_size
+
+    segments, info = transcriber.transcribe(str(media_file), **kwargs)
+
     with out_txt.open("w", encoding="utf-8") as ftxt:
-        i = 1
         for seg in segments:
             text = seg.text.strip()
-            if not text:
-                continue
-            ftxt.write(text + "\n")
-            i += 1
+            if text:
+                ftxt.write(text + "\n")
 
     print(f"Done.\n- {out_txt}\n")
-    print(f"Detected language: {info.language}, probability={info.language_probability:.3f}")
+    print(
+        f"Detected language: {info.language}, probability={info.language_probability:.3f}"
+    )
 
 
 def list_media_files(input_dir: Path):
@@ -61,28 +60,88 @@ def list_media_files(input_dir: Path):
     ]
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Transcribe media files with faster-whisper."
+    )
+    parser.add_argument("model_size", nargs="?", default="medium")
+    parser.add_argument("lang", nargs="?", default="zh")
+    parser.add_argument("--input-dir", type=Path, default=Path("./in"))
+    parser.add_argument("--output-dir", type=Path, default=Path("./out"))
+    parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
+    parser.add_argument(
+        "--compute-type",
+        default="float16",
+        help="cuda 推荐 float16；cpu 可选 int8/int8_float32/float32",
+    )
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        default=1,
+        help="追求速度时建议 1，精度优先可设为 5",
+    )
+    parser.add_argument(
+        "--vad-filter",
+        action="store_true",
+        help="启用 VAD，可提升静音场景稳定性，但略降速度",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=16,
+        help="仅在 CUDA batched pipeline 下生效，可提升 GPU 利用率",
+    )
+    parser.add_argument(
+        "--disable-batched",
+        action="store_true",
+        help="禁用 batched pipeline（排查兼容性时使用）",
+    )
+    return parser.parse_args()
+
+
 def main():
-    input_dir = Path("E:/PycharmProjects/faster-whisper/in").expanduser()
-    output_dir = Path("E:/PycharmProjects/faster-whisper/out").expanduser()
-    model_size = sys.argv[1] if len(sys.argv) >= 2 else "medium"
-    lang = sys.argv[2] if len(sys.argv) >= 3 else "zh"  # 改成 "auto" 可自动识别
+    args = parse_args()
+    input_dir = args.input_dir.expanduser()
+    output_dir = args.output_dir.expanduser()
 
     if not input_dir.exists() or not input_dir.is_dir():
         print(f"Input directory not found: {input_dir}")
-        sys.exit(1)
+        raise SystemExit(1)
 
     media_files = list_media_files(input_dir)
     if not media_files:
         print(f"No media files found in: {input_dir}")
-        sys.exit(0)
+        raise SystemExit(0)
 
-    # 3070Ti：device="cuda" + compute_type="float16" 通常最快
-    model = WhisperModel(model_size, device="cuda", compute_type="float16")
+    model = WhisperModel(
+        args.model_size,
+        device=args.device,
+        compute_type=args.compute_type,
+    )
+
+    transcriber = model
+    if args.device == "cuda" and not args.disable_batched:
+        transcriber = BatchedInferencePipeline(model=model)
+
+    print(
+        f"Config => model={args.model_size}, lang={args.lang}, device={args.device}, "
+        f"compute_type={args.compute_type}, beam={args.beam_size}, vad={args.vad_filter}, "
+        f"batch_size={args.batch_size}, batched={isinstance(transcriber, BatchedInferencePipeline)}"
+    )
 
     for media_file in media_files:
         rel_path = media_file.relative_to(input_dir)
         out_txt = (output_dir / rel_path).with_suffix(".txt")
-        transcribe_one(model, media_file, out_txt, lang)
+        transcribe_one(
+            transcriber,
+            media_file,
+            out_txt,
+            args.lang,
+            args.beam_size,
+            args.vad_filter,
+            args.batch_size,
+        )
+
 
 if __name__ == "__main__":
     main()
