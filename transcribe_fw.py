@@ -44,15 +44,6 @@ def transcribe_one(
 
     try:
         segments, info = transcriber.transcribe(str(media_file), **kwargs)
-    except RuntimeError as exc:
-        if NO_CLIP_TIMESTAMPS_ERROR in str(exc) and not vad_filter:
-            print(
-                f"Warning: {media_file} 命中 'No clip timestamps found'，自动重试并启用 VAD。"
-            )
-            kwargs["vad_filter"] = True
-            segments, info = transcriber.transcribe(str(media_file), **kwargs)
-        else:
-            raise
     except IndexError as exc:
         if NO_AUDIO_STREAM_ERROR in str(exc):
             print(
@@ -88,8 +79,9 @@ def parse_args():
     )
     parser.add_argument("model_size", nargs="?", default="medium")
     parser.add_argument("lang", nargs="?", default="zh")
-    parser.add_argument("--input-dir", type=Path, default=Path("./in"))
-    parser.add_argument("--output-dir", type=Path, default=Path("./out"))
+    parser.add_argument("vad_filter", nargs="?", default="True")
+    parser.add_argument("--input-dir", type=Path, default=Path("E:/PycharmProjects/faster-whisper/in"))
+    parser.add_argument("--output-dir", type=Path, default=Path("E:/PycharmProjects/faster-whisper/out"))
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
     parser.add_argument(
         "--compute-type",
