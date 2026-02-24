@@ -105,12 +105,20 @@ def parse_args():
     parser.add_argument("model_size", nargs="?", default="medium")
     # 位置参数：语言代码；传 auto 时会启用自动语言检测
     parser.add_argument("lang", nargs="?", default="zh")
-    # 位置参数：历史兼容字段（实际是否启用 VAD 以 --vad-filter 开关为准）
-    parser.add_argument("vad_filter", nargs="?", default="True")
+
+    # 可提升静音场景稳定性，但略降速度
+    parser.add_argument("--vad-filter", dest="vad_filter", action="store_true", help="启用 VAD")
+    parser.add_argument("--no-vad-filter", dest="vad_filter", action="store_false", help="禁用 VAD")
+    parser.set_defaults(vad_filter=True)  # 默认开VAD就设True；否则False
+
+    # 关闭VAD需要同步关闭
+    # parser.add_argument("--condition_on_previous_text", default="False", help="时间戳生成")
+
     # 输入/输出默认目录为本地开发路径，可按需在命令行覆盖
     parser.add_argument("--input-dir", type=Path, default=Path("E:/PycharmProjects/faster-whisper/in"))
     parser.add_argument("--output-dir", type=Path, default=Path("E:/PycharmProjects/faster-whisper/out"))
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
+
     parser.add_argument(
         "--compute-type",
         default="float16",
@@ -119,13 +127,8 @@ def parse_args():
     parser.add_argument(
         "--beam-size",
         type=int,
-        default=1,
+        default=5,
         help="追求速度时建议 1，精度优先可设为 5",
-    )
-    parser.add_argument(
-        "--vad-filter",
-        action="store_true",
-        help="启用 VAD，可提升静音场景稳定性，但略降速度",
     )
     parser.add_argument(
         "--batch-size",
