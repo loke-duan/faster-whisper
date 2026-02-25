@@ -24,16 +24,29 @@ MEDIA_EXTENSIONS = {
 }
 
 
+def format_srt_timestamp(seconds: float) -> str:
+    """将秒数格式化为 SRT 时间戳（HH:MM:SS,mmm）。"""
+    total_ms = max(0, int(round(seconds * 1000)))
+    hours = total_ms // 3_600_000
+    remainder = total_ms % 3_600_000
+    minutes = remainder // 60_000
+    remainder %= 60_000
+    secs = remainder // 1000
+    millis = remainder % 1000
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
 def transcribe_one(
     transcriber,
     media_file: Path,
     out_txt: Path,
+    output_format: str,
     lang: str,
     beam_size: int,
     vad_filter: bool,
     batch_size: int,
 ):
-    """转写单个媒体文件并写入同名 txt。
+    """转写单个媒体文件并写入同名 txt/srt。
 
     返回值：
     - True: 成功转写并输出文本。
@@ -68,16 +81,42 @@ def transcribe_one(
         # 不是已知可跳过异常时，继续向上抛出，便于尽早暴露问题
         raise
 
+    # segments 是生成器，若同时输出 txt/srt 需先物化，避免二次遍历为空
+    segments = list(segments)
+
     # 使用 UTF-8 输出，避免中文/多语言内容写入时出现编码问题
-    with out_txt.open("w", encoding="utf-8") as ftxt:
-        # 逐段写入非空文本，每行一个 segment
-        for seg in segments:
-            text = seg.text.strip()
-            if text:
-                ftxt.write(text + "\n")
+    if output_format in {"txt", "both"}:
+        with out_txt.open("w", encoding="utf-8") as ftxt:
+            # 逐段写入非空文本，每行一个 segment
+            for seg in segments:
+                text = seg.text.strip()
+                if text:
+                    ftxt.write(text + "\n")
+
+    if output_format in {"srt", "both"}:
+        out_srt = out_txt.with_suffix(".srt")
+        with out_srt.open("w", encoding="utf-8") as fsrt:
+            subtitle_index = 1
+            for seg in segments:
+                text = seg.text.strip()
+                if not text:
+                    continue
+
+                fsrt.write(f"{subtitle_index}\n")
+                fsrt.write(
+                    f"{format_srt_timestamp(seg.start)} --> {format_srt_timestamp(seg.end)}\n"
+                )
+                fsrt.write(f"{text}\n\n")
+                subtitle_index += 1
 
     # 打印输出文件位置，方便批处理时快速定位结果
-    print(f"Done.\n- {out_txt}\n")
+    if output_format == "txt":
+        print(f"Done.\n- {out_txt}\n")
+    elif output_format == "srt":
+        print(f"Done.\n- {out_txt.with_suffix('.srt')}\n")
+    else:
+        print(f"Done.\n- {out_txt}\n- {out_txt.with_suffix('.srt')}\n")
+
     # 输出语言识别结果与置信度，便于人工核对 auto 识别效果
     print(
         f"Detected language: {info.language}, probability={info.language_probability:.3f}"
@@ -111,13 +150,16 @@ def parse_args():
     parser.add_argument("--no-vad-filter", dest="vad_filter", action="store_false", help="禁用 VAD")
     parser.set_defaults(vad_filter=True)  # 默认开VAD就设True；否则False
 
-    # 关闭VAD需要同步关闭
-    # parser.add_argument("--condition_on_previous_text", default="False", help="时间戳生成")
-
     # 输入/输出默认目录为本地开发路径，可按需在命令行覆盖
     parser.add_argument("--input-dir", type=Path, default=Path("E:/PycharmProjects/faster-whisper/in"))
     parser.add_argument("--output-dir", type=Path, default=Path("E:/PycharmProjects/faster-whisper/out"))
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu"])
+    parser.add_argument(
+        "--output-format",
+        default="txt",
+        choices=["txt", "srt", "both"],
+        help="输出格式：txt、srt 或 both（同时输出）",
+    )
 
     parser.add_argument(
         "--compute-type",
@@ -179,7 +221,8 @@ def main():
     print(
         f"Config => model={args.model_size}, lang={args.lang}, device={args.device}, "
         f"compute_type={args.compute_type}, beam={args.beam_size}, vad={args.vad_filter}, "
-        f"batch_size={args.batch_size}, batched={isinstance(transcriber, BatchedInferencePipeline)}"
+        f"batch_size={args.batch_size}, output_format={args.output_format}, "
+        f"batched={isinstance(transcriber, BatchedInferencePipeline)}"
     )
 
     # 统计：成功转写数量与跳过数量（如无音轨文件）
@@ -195,6 +238,7 @@ def main():
             transcriber,
             media_file,
             out_txt,
+            args.output_format,
             args.lang,
             args.beam_size,
             args.vad_filter,
